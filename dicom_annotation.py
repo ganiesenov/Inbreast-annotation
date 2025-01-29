@@ -5,6 +5,19 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
+def get_dicom_info(dicom_path):
+    """Extracts basic info from DICOM file"""
+    try:
+        dcm = pydicom.dcmread(dicom_path)
+        return {
+            'width': dcm.Columns,
+            'height': dcm.Rows,
+            'spacing': getattr(dcm, 'PixelSpacing', [1, 1])
+        }
+    except Exception as e:
+        print(f"Error reading DICOM {dicom_path}: {e}")
+        return None
+
 def clean_value(value):
     """Cleans string value by removing extra spaces and newlines"""
     if pd.isna(value):
@@ -44,6 +57,10 @@ def create_annotation(row, img_info):
     
     # Get density and mass type
     density = clean_value(row['ACR'])
+    if not density or not str(density).isdigit():
+        print(f"Warning: Invalid density value for file {row['File Name']}: {density}")
+        return None
+        
     mass_type = get_mass_type(row)
     
     # Create category string like "Density1+Benign"
@@ -60,7 +77,7 @@ def create_annotation(row, img_info):
             'pixel_spacing': img_info['spacing']
         },
         'classification': {
-            'density': int(density) if density else None,
+            'density': int(density),
             'mass_type': mass_type,
             'category': category,
             'birads': clean_value(row['Bi-Rads'])
@@ -95,10 +112,12 @@ def main():
     # Load Excel data
     print("Loading Excel data...")
     df = pd.read_excel(excel_path)
+    print(f"Loaded {len(df)} rows from Excel")
     
     # Process each row
     annotations = []
     categories_count = {}  # Для подсчета количества изображений в каждой категории
+    errors = []  # Для сбора информации об ошибках
     
     print("\nProcessing DICOM files...")
     
@@ -127,7 +146,9 @@ def main():
                     print(f"Processed image {filename} - {category}")
         
         except Exception as e:
-            print(f"Error processing row {idx} (File: {row.get('File Name')}): {str(e)}")
+            error_msg = f"Error processing row {idx} (File: {row.get('File Name')}): {str(e)}"
+            print(error_msg)
+            errors.append(error_msg)
             continue
     
     # Save annotations
@@ -138,9 +159,18 @@ def main():
     # Print statistics
     print("\nDataset statistics:")
     print(f"Total images processed: {len(annotations)}")
+    print(f"Failed to process: {len(errors)} images")
+    
     print("\nImages per category:")
     for category, count in sorted(categories_count.items()):
         print(f"{category}: {count}")
+    
+    # Save error log if there were any errors
+    if errors:
+        error_path = annotations_dir / 'processing_errors.txt'
+        with open(error_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(errors))
+        print(f"\nErrors have been saved to {error_path}")
     
     print(f"\nDone! Annotations saved to {output_path}")
 
